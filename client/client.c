@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#define client_port 9000
+#define client_port 2222
 #define buffer_size 500
 
 typedef struct
