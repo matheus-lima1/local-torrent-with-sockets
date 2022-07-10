@@ -26,7 +26,7 @@ typedef struct message{
     char file[20];
 } message;
 
-
+// Soma as palavras
 void add_binary(int response[], int bin[]){
     int check = 0;
     int aux;
@@ -46,6 +46,8 @@ void add_binary(int response[], int bin[]){
     }
 }
 
+
+// Função para execução do checksum
 int checksum(package *pkg){
     
     int bin[0];
@@ -55,6 +57,7 @@ int checksum(package *pkg){
         return 0;
     }
 
+    // Percirre as posições
     for( int i = 0; i < pkg -> size; i++ ){
         char aux = pkg -> data[i];
         for( int j = 7; j>= 0; --j ){
@@ -69,8 +72,11 @@ int checksum(package *pkg){
         add_binary(sum, bin);
     }
 
+    // Soma as palavras
     add_binary(sum, pkg -> checksum);
 
+
+    // Verifica integridade do pacote
     int verified = 1;
     for ( int i = 0; i < 8; i++ ){
         if(sum[i] != 0){
@@ -83,14 +89,14 @@ int checksum(package *pkg){
 }
 
 
-
+// Receber mensagens
 void consume_message(int server_domain, struct sockaddr_in remote_addr, char *buffer){
     int received_from;
     socklen_t addr_lenght = sizeof(remote_addr);
 
     while(1){
         received_from = recvfrom(server_domain, buffer, SIZE, 0, (struct sockaddr *)&remote_addr, &addr_lenght);
-
+        
         if(received_from == -1){
             printf("Error receiving message\n");
             exit(1);
@@ -102,6 +108,8 @@ void consume_message(int server_domain, struct sockaddr_in remote_addr, char *bu
     }
 }
 
+
+// Enviar mensagens
 void produce_message(int server_domain, struct sockaddr_in remote_addr, char *buffer, int type){
     int received_from;
     socklen_t addr_lenght = sizeof(remote_addr);
@@ -114,7 +122,7 @@ void produce_message(int server_domain, struct sockaddr_in remote_addr, char *bu
             exit(1);
         }
         else{
-            // printf("Sent message: %s\n", buffer);
+            printf("Sent message: %s\n", buffer);
         }
     }
     else if(type == 2){
@@ -129,11 +137,13 @@ void produce_message(int server_domain, struct sockaddr_in remote_addr, char *bu
             exit(1);
         }
         else{
-            // printf("Sent message: %s\n", buffer);
+            printf("Sent message: %s\n", buffer);
         }
     }
 }
 
+
+// Consumir pacotes
 void consume_package(int server_domain, struct sockaddr_in remote_addr, char *filename){
     package pkg;
     FILE *file;
@@ -142,6 +152,7 @@ void consume_package(int server_domain, struct sockaddr_in remote_addr, char *fi
     char ack = '1';
     char nak = '0';
 
+    // Lê e escreve no arquivo binário
     file = fopen(filename, "wb");
     if(file == NULL){
         printf("Error opening file\n");
@@ -177,10 +188,12 @@ void consume_package(int server_domain, struct sockaddr_in remote_addr, char *fi
             sendto(server_domain, &ack, sizeof(ack), 0, (struct sockaddr *)&remote_addr, addr_lenght);
             counter++;
 
+            // Verifica se é o ultimo pacote
             if(pkg.size < SIZE){
                 break;
             }
         }
+        
         else{
             printf("Package %d corrupted in the way, waiting for resend\n", pkg.seq_num);
             sendto(server_domain, &nak, sizeof(nak), 0, (struct sockaddr *)&remote_addr, addr_lenght);
@@ -200,12 +213,14 @@ int main(int argc, char *argv[]){
 
     char *buffer = (char *)malloc(SIZE * sizeof(char));
 
+    // Válida parâmetros de entrada
     if(argc == 1){
         printf("Error!! Enter the file name \n");
         exit(1);
     }
 
     strcpy(buffer, argv[1]);
+    // Criar socket
     server_domain = socket(AF_INET, SOCK_DGRAM, 0);
 
     if(server_domain == -1){
@@ -215,16 +230,20 @@ int main(int argc, char *argv[]){
 
     memset(&remote_server_addr, 0, sizeof(remote_server_addr));
 
+    // Dados do servidor
     remote_server_addr.sin_family = AF_INET;
     remote_server_addr.sin_port = htons(SERVER_PORT);
     remote_server_addr.sin_addr.s_addr = inet_addr(LOCAL_IP);
 
+    // Procura o dono do arquivo
     produce_message(server_domain, remote_server_addr, buffer, 1);
 
     printf("Request sent to server\n");
     sleep(1);
     memset(buffer, '\0', SIZE);
 
+
+    // Recebe o dono do arquivo
     consume_message(server_domain, remote_server_addr, buffer);
 
     if(buffer[0] == '1'){
@@ -237,21 +256,23 @@ int main(int argc, char *argv[]){
         exit(1);
     }
 
+    // Comunica com o cliente
     memset(&remote_client_b, 0, sizeof(remote_client_b));
 
+    // Dados do cliente
     remote_client_b.sin_family = AF_INET;
     remote_client_b.sin_port = htons(CLIENT_PORT);
     remote_client_b.sin_addr.s_addr = inet_addr(LOCAL_IP);
 
-    strcpy(buffer, argv[1]);
-
+    strcpy(buffer, argv[1]);    
     produce_message(server_domain, remote_client_b, buffer, 1);
     sleep(1);
     printf("Request sent to the client who owns the file\n");
     memset(buffer, '\0', SIZE);
 
     consume_message(server_domain, remote_client_b, buffer);
-
+    
+    // Inicia transferência do arquivo
     if(buffer[0] == '1'){
         sleep(1);
         printf("Initiating transfer\n");
