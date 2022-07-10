@@ -1,13 +1,13 @@
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>   
-#include <sys/time.h> 
-#include <sys/types.h>
-// #include <sys/socket.h>
-// #include <netinet/in.h>
-// #include <arpa/inet.h>
-// #include <netdb.h>
+#include <sys/time.h>
 
 #define LOCAL_IP "127.0.0.1"
 #define SIZE 1024
@@ -84,7 +84,7 @@ int checksum(package *pkg){
 
 
 
-void consume_message(int server_domain, struct socketaddr_in remote_addr, char *buffer){
+void consume_message(int server_domain, struct sockaddr_in remote_addr, char *buffer){
     int received_from;
     socklen_t addr_lenght = sizeof(remote_addr);
 
@@ -96,15 +96,15 @@ void consume_message(int server_domain, struct socketaddr_in remote_addr, char *
             exit(1);
         }
         else{
-            // printf("Received message: %s\n", buffer);
+            printf("Received message: %s\n", buffer);
             break;
         }
     }
 }
 
-void produce_message(int server_domain, struct socketaddr_in remote_addr, char *buffer, int type){
+void produce_message(int server_domain, struct sockaddr_in remote_addr, char *buffer, int type){
     int received_from;
-    socketlen_t addr_lenght = sizeof(remote_addr);
+    socklen_t addr_lenght = sizeof(remote_addr);
 
     if(type == 1){
         received_from = sendto(server_domain, buffer, SIZE, 0, (struct sockaddr *)&remote_addr, addr_lenght);
@@ -148,7 +148,7 @@ void consume_package(int server_domain, struct sockaddr_in remote_addr, char *fi
         exit(1);
     }
 
-    socketlen_t addr_lenght = sizeof(remote_addr);
+    socklen_t addr_lenght = sizeof(remote_addr);
 
     while(1){
         memset(&pkg, 0, sizeof(package));
@@ -191,10 +191,12 @@ void consume_package(int server_domain, struct sockaddr_in remote_addr, char *fi
 }
 
 int main(int argc, char *argv[]){
-    int server_domain;
-    int CLIENT_PORT;
     struct sockaddr_in remote_server_addr;
     struct sockaddr_in remote_client_b;
+
+
+    int server_domain;
+    int CLIENT_PORT;
 
     char *buffer = (char *)malloc(SIZE * sizeof(char));
 
@@ -270,7 +272,7 @@ int main(int argc, char *argv[]){
     }
 
     free(buffer);
-    
+
     return 0;
 
 
