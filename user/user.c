@@ -1,3 +1,9 @@
+// === Alunos ===
+// João Vitor Oliveira Araújo - 2020017537
+// Matheus Brandão Rezende de Lima - 2020005053
+// Vinícius Barbosa - 2020009867
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
