@@ -1,300 +1,339 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <netdb.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>   
-#include <sys/time.h>
+#include <netinet/in.h>
 
-#define LOCAL_IP "127.0.0.1"
-#define SIZE 1024
+
+#define BUFLEN 1024 
+#define SERVER_PORT 3000 
 #define USER_PORT 1111
-#define SERVER_PORT 8888
 
-typedef struct package{
-    int seq_num;
-    char data[1024];
-    int checksum[8];
-    int size;
-} package;
+typedef struct
+{
+  uint32_t num_seq; // Número de sequencia
+  unsigned long checksum; //Checksum
+  char data[BUFLEN]; //Info
+} packet_t; //Pacote para transferência
 
-typedef struct message{
-    int client_port;
-    char file[20];
-} message;
+typedef struct segmentation
+{
+	int port;
+	char file[BUFLEN];
+} segmentation;
 
-// Soma as palavras
-void add_binary(int response[], int bin[]){
-    int check = 0;
-    int aux;
-
-    for ( int i = 7; i >= 0; i-- ){
-        aux = response[i];
-        response[i] = ((aux ^ bin[i]) ^ check);                    
-        check = ((aux & bin[i]) | (aux & check)) | (bin[i] & check);
-    }
-    if (check == 1){
-        int aux2;
-        for (int i = 7; i >= 0; i--){
-            aux2 = response[i];
-            response[i] = ((aux2 ^ 0) ^ check);          
-            check = ((aux2 & 0) | (aux2 & check)) | (0 & check); 
-        }
-    }
+void error(char *s)
+{
+  perror(s);
+  exit(1);
 }
 
+unsigned long hash(unsigned char *str)
+{
+  unsigned long hash = 5381;
+  int c;
 
-// Função para execução do checksum
-int checksum(package *pkg){
+  while (c = *str++)
+    hash = ((hash << 5) + hash) + c;
+  return hash;
+}
+
+void notifyServer(char * filename){
+  struct sockaddr_in server_socket_in; //Socket de info do server
+  struct segmentation seg; //Struct com dados para as informações necessário para atualização
+
+  seg.port = USER_PORT; //Atribuindo o valor da porta
+
+  int server_socket, server_socket_len = sizeof(server_socket_in); // Socket do server e seu tamanho
+  char notify_file_name[BUFLEN];
+
+  sprintf(seg.file, "%s", filename);
+
+  if ((server_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) //Verificação se a criação do socket ocorreu corretamente
+  {
+    error("Error creating socket\n");
+  }
+
+  memset((char *)&server_socket_in, 0, sizeof(server_socket_in));
+
+  //Definição das infos do socket do servidor
+  server_socket_in.sin_family = AF_INET;
+  server_socket_in.sin_port = htons(SERVER_PORT);
+  server_socket_in.sin_addr.s_addr = INADDR_ANY;                                      
     
-    int bin[0];
-    int sum[8];
 
-    if(pkg == NULL){
-        return 0;
-    }
-
-    // Percirre as posições
-    for( int i = 0; i < pkg -> size; i++ ){
-        char aux = pkg -> data[i];
-        for( int j = 7; j>= 0; --j ){
-            if(aux & (1 << j)){
-                bin[7 - j] = 1;
-            }
-            else{
-                bin[7 - j] = 0;
-            }
-        }
-
-        add_binary(sum, bin);
-    }
-
-    // Soma as palavras
-    add_binary(sum, pkg -> checksum);
-
-
-    // Verifica integridade do pacote
-    int verified = 1;
-    for ( int i = 0; i < 8; i++ ){
-        if(sum[i] != 0){
-            verified = 0;
-        }
-    }
-
-    return verified;
-
+  //Envio do pacote com os dados de atualização para o servidor
+  if (sendto(server_socket, &seg, sizeof(seg), 0, (struct sockaddr *)&server_socket_in, server_socket_len) == -1)
+  {
+    error("Error sending filename\n");
+  }
 }
 
+void receiveFile(char * request_addr, char * filename){
+    struct sockaddr_in receive_file_socket_in; //Infos do socket
+    int receive_file_socket; //Socket de recebimento do arquivo
+    int receive_file_socket_len = sizeof(receive_file_socket_in); //Tamanho do socket de recebimento
 
-// Receber mensagens
-void consume_message(int server_domain, struct sockaddr_in remote_addr, char *buffer){
-    int received_from;
-    socklen_t addr_lenght = sizeof(remote_addr);
-
-    while(1){
-        received_from = recvfrom(server_domain, buffer, SIZE, 0, (struct sockaddr *)&remote_addr, &addr_lenght);
-        
-        if(received_from == -1){
-            printf("Error receiving message\n");
-            exit(1);
-        }
-        else{
-            printf("Received message: %s\n", buffer);
-            break;
-        }
+    if ((receive_file_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) //Verificação se socket foi criado com sucesso
+    {
+        error("Error creating socket\n");
     }
-}
 
+    memset((char *)&receive_file_socket_in, 0, sizeof(receive_file_socket_in));
 
-// Enviar mensagens
-void produce_message(int server_domain, struct sockaddr_in remote_addr, char *buffer, int type){
-    int received_from;
-    socklen_t addr_lenght = sizeof(remote_addr);
+    //Definindo as infos do socket de recebimento do file
+    receive_file_socket_in.sin_family = AF_INET; 
+    receive_file_socket_in.sin_port = htons(USER_PORT);
+    receive_file_socket_in.sin_addr.s_addr = inet_addr(request_addr);
 
-    if(type == 1){
-        received_from = sendto(server_domain, buffer, SIZE, 0, (struct sockaddr *)&remote_addr, addr_lenght);
+    //Intervalo de timeout
+    struct timeval read_timeout;
+    read_timeout.tv_sec = 2;
+    read_timeout.tv_usec = 0;
 
-        if(received_from == -1){
-            printf("Error sending message\n");
-            exit(1);
-        }
-        else{
-            printf("Sent message: %s\n", buffer);
-        }
+    setsockopt(receive_file_socket, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);
+
+    //Envio da request para receber o pacote
+    if (sendto(receive_file_socket, filename, strlen(filename), 0, (struct sockaddr *)&receive_file_socket_in, receive_file_socket_len) == -1)
+    {
+        error("Error sending request to PEER\n");
     }
-    else if(type == 2){
-        message message;
-        message.client_port = USER_PORT;
-        strcpy(message.file, buffer);
 
-        received_from = sendto(server_domain, &message, sizeof(message), 0, (struct sockaddr *)&remote_addr, addr_lenght);
-    
-        if(received_from == -1){
-            printf("Error sending message\n");
-            exit(1);
+
+    int checksum_error = 0;
+
+    //Variável utilizada para armazenar os dados do arquivo
+    FILE *fp;
+    packet_t package;
+
+    fp = fopen(filename, "w+");
+
+    //Laço para receber os pacotes 
+    while (recvfrom(receive_file_socket, &package, sizeof(package), 0, (struct sockaddr *)&receive_file_socket_in, &receive_file_socket_len) > 0)
+    {
+        unsigned long result;
+        result = hash(package.data);
+
+        //Verificação se o checksum bateu
+        if (package.checksum != result)
+        {
+            printf("Error package sequence number: %d\n", package.num_seq);
+            checksum_error++;
         }
-        else{
-            printf("Sent message: %s\n", buffer);
-        }
+
+        //Escrita do pacote
+        fwrite(package.data, sizeof(package.data), 1, fp);
+    }
+
+    //Fecha o arquivo
+    fclose(fp);
+
+    if (checksum_error > 0)
+    {
+        printf("Checksum error on %d packages.\n", checksum_error);
+    }
+    else
+    {
+        printf("\nThe file was received without errors.\n");
+        notifyServer(filename);
     }
 }
 
 
-// Consumir pacotes
-void consume_package(int server_domain, struct sockaddr_in remote_addr, char *filename){
-    package pkg;
-    FILE *file;
-    int received_from;
-    int counter = 0;
-    char ack = '1';
-    char nak = '0';
+void await_requisition(){
+    int socket_client; //Socket do client
+    struct sockaddr_in socket_client_in; //Infos do socket do client
+    int receive_len; //Armazenar tamanho da mensagem recebida
+    char filename[BUFLEN];
 
-    // Lê e escreve no arquivo binário
-    file = fopen(filename, "wb");
-    if(file == NULL){
-        printf("Error opening file\n");
+    socket_client = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); //Criação do socket do cliente
+    if(socket_client == -1){ //Verificação se foi criado com sucesso
+        perror("Error creating client socket");
         exit(1);
     }
 
-    socklen_t addr_lenght = sizeof(remote_addr);
+    memset((char *)&socket_client_in, 0, sizeof(socket_client_in));//Limpando a struct que guardará as infos do socket do client
 
-    while(1){
-        memset(&pkg, 0, sizeof(package));
+    socket_client_in.sin_addr.s_addr = htonl(INADDR_ANY); //Definindo um ip não específico
+    socket_client_in.sin_family = AF_INET; //Família do protocolo
+    socket_client_in.sin_port = htons(USER_PORT); //Define a porta do client 
 
-        received_from = recvfrom(server_domain, &pkg, sizeof(pkg), 0, (struct sockaddr *)&remote_addr, &addr_lenght);
+    int aux = bind( //Fazendo o bind do socket com as as definições de endereço
+        socket_client, 
+        (struct sockaddr *)&socket_client_in, 
+        sizeof(socket_client_in));
+    
+    if (aux == -1){
+        perror("Binding error");
+        exit(1);
+    }
+
+    struct sockaddr_in socket_user_in;
+    int socket_user_size = sizeof(socket_user_in);
+
+    while (1)
+    {
+        printf("Awaiting requests...\n");
+        fflush(stdout);
+
+        //Recebendo o nome do arquivo e salvando 
+        receive_len = recvfrom(
+            socket_client, 
+            filename, 
+            BUFLEN, 
+            0,
+            (struct sockaddr *)&socket_user_in,
+            &socket_user_size
+            );
         
-        if(received_from == -1){
-            printf("Error receiving package\n");
+        //Caso ocorreu algum erro no recebimento
+        if(receive_len == -1){
+            perror("Error receiving file name");
             exit(1);
         }
-        else{
-            if(checksum(&pkg) == 1){
-                printf("Received package: %d\n", pkg.seq_num);
-            }
+
+        FILE *file;
+        file = fopen(filename, "r+");//Abrindo arquivo
+
+        if(!file)//Verificando se foi possível abrir o arquivo
+        {
+            printf("Error opening file");
+            exit(1);
         }
-        
-        int verified = checksum(&pkg);
-        if(verified = 1 && pkg.seq_num == counter + 1){
-            printf("package %d received \n", pkg.seq_num);
+
+        //Determinando o tamanho do arquivo
+        fseek(file, 0, SEEK_END);
+        size_t bits_amount = ftell(file);
+        fseek(file, 0, SEEK_SET);
+
+        if(bits_amount > BUFLEN){
+            bits_amount = BUFLEN;
+        }
+
+        //Variavel que armazenará o número de sequencia para enviar junto com os pacotes do arquivo
+        uint32_t sequence_number;
+        sequence_number = 0;
+
+        printf("Sending File...\n");
+
+        char file_buffer[BUFLEN];
+        packet_t package;
+
+        //Executa o processo enquanto ainda houver bits a serem lidos
+        while(fread(file_buffer, bits_amount, 1, file) > 0){
+            unsigned long hash_value;
+            hash_value = hash(file_buffer); //Calculo do hash para ser usado no checksum 
+
+            //Atribuição de dados ao pacote que será enviado
+            package.checksum = hash_value;
+            package.num_seq = sequence_number;
+            memset(package.data, 0, BUFLEN);
+            memcpy(package.data, file_buffer, bits_amount);
+
+            //Envio do pacote ao user
+            int aux = sendto(
+                socket_client, 
+                &package, 
+                sizeof(package),
+                0, 
+                (struct sockaddr *)&socket_user_in,
+                socket_user_size
+            );
+
+            //Validando se o envio ocorreu corretamente
+            if(aux == -1){
+                printf("Error sending package %d", sequence_number);
+                exit(1);
+            }
             
-            usleep(4000);
-            system("tput cuu1");
-            system("tput dl1");
-
-            fwrite(pkg.data, 1, pkg.size, file);
-            sendto(server_domain, &ack, sizeof(ack), 0, (struct sockaddr *)&remote_addr, addr_lenght);
-            counter++;
-
-            // Verifica se é o ultimo pacote
-            if(pkg.size < SIZE){
-                break;
-            }
+            //Incremento no numero de senquência
+            sequence_number++;
         }
-        
-        else{
-            printf("Package %d corrupted in the way, waiting for resend\n", pkg.seq_num);
-            sendto(server_domain, &nak, sizeof(nak), 0, (struct sockaddr *)&remote_addr, addr_lenght);
-        }
+
+        fclose(file);
+        printf("File sent successfully\n");
     }
+    close(socket_client);
 
-    fclose(file);
 }
 
-int main(int argc, char *argv[]){
-    struct sockaddr_in remote_server_addr;
-    struct sockaddr_in remote_client_b;
+void requestFile()
+{
+  struct sockaddr_in socket_server_in, socket_user_in; //Infos do socket do user e do server
+  int socket_server, socket_server_len = sizeof(socket_server_in); //Socket do server e seu tamanho
+  int socket_user, socket_user_len = sizeof(socket_user_in); //Socket do user e seu tamanho
+  packet_t package; //Struct com os dados do pacote
+  char filename[BUFLEN];
+  char buf[BUFLEN];
+
+  //Leitura do arquivo desejado
+  printf("Filename: ");
+  scanf("%s", filename);
+
+  //Verificação da criação do socket
+  if ((socket_server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+  {
+    error("Error creating socket\n");
+  }
+  
+  memset((char *)&socket_server_in, 0, sizeof(socket_server_in));
+
+  //Definindo as infos do socket do server
+  socket_server_in.sin_family = AF_INET; 
+  socket_server_in.sin_port = htons(SERVER_PORT); 
+  socket_server_in.sin_addr.s_addr = INADDR_ANY; 
+  
+  //Envio do request pelo file para o server
+  if (sendto(socket_server, filename, strlen(filename), 0, (struct sockaddr *)&socket_server_in, socket_server_len) == -1)
+  {
+    error("Error sending filename\n");
+  }
+
+  //Recebimento do client que possui o arquivo 
+  recvfrom(socket_server, (char *)buf, BUFLEN, 0, (struct sockaddr *)&socket_server_in, &socket_server_len);
+
+  //Verificação se é um client válido 
+  if(strcmp(buf, "0") == 0)
+  {
+    printf("There is no PEER that has this file.\n");
+    return;    
+  }
+
+  //Inicia o as etapas de recebimento do arquivo
+  receiveFile(buf, filename);
+}
 
 
-    int server_domain;
-    int CLIENT_PORT;
+int main()
+{
+  int option = 0;
 
-    char *buffer = (char *)malloc(SIZE * sizeof(char));
+  while (1)
+  {
+    printf("1 - Seed File\n");
+    printf("2 - Request File\n");
+    printf("Press 0 to exit\n");
+    scanf("%d", &option);
 
-    // Válida parâmetros de entrada
-    if(argc == 1){
-        printf("Error!! Enter the file name \n");
-        exit(1);
+    switch (option)
+    {
+    case 1:
+      await_requisition();
+      break;
+    case 2:
+      requestFile();
+      break;
+    case 0:
+      exit(0);
+      break;
+    default:
+      printf("Invalid option.\n");
     }
+  }
 
-    strcpy(buffer, argv[1]);
-    // Criar socket
-    server_domain = socket(AF_INET, SOCK_DGRAM, 0);
-
-    if(server_domain == -1){
-        printf("Error creating socket\n");
-        exit(1);
-    }
-
-    memset(&remote_server_addr, 0, sizeof(remote_server_addr));
-
-    // Dados do servidor
-    remote_server_addr.sin_family = AF_INET;
-    remote_server_addr.sin_port = htons(SERVER_PORT);
-    remote_server_addr.sin_addr.s_addr = inet_addr(LOCAL_IP);
-
-    // Procura o dono do arquivo
-    produce_message(server_domain, remote_server_addr, buffer, 1);
-
-    printf("Request sent to server\n");
-    sleep(1);
-    memset(buffer, '\0', SIZE);
-
-
-    // Recebe o dono do arquivo
-    consume_message(server_domain, remote_server_addr, buffer);
-
-    if(buffer[0] == '1'){
-        CLIENT_PORT = atoi(&buffer[1]);
-        printf("The client on port %d has the file.\n", CLIENT_PORT);
-        memset(buffer, '\0', SIZE);
-    }
-    else{
-        printf("File not found.\n");
-        exit(1);
-    }
-
-    // Comunica com o cliente
-    memset(&remote_client_b, 0, sizeof(remote_client_b));
-
-    // Dados do cliente
-    remote_client_b.sin_family = AF_INET;
-    remote_client_b.sin_port = htons(CLIENT_PORT);
-    remote_client_b.sin_addr.s_addr = inet_addr(LOCAL_IP);
-
-    strcpy(buffer, argv[1]);    
-    produce_message(server_domain, remote_client_b, buffer, 1);
-    sleep(1);
-    printf("Request sent to the client who owns the file\n");
-    memset(buffer, '\0', SIZE);
-
-    consume_message(server_domain, remote_client_b, buffer);
-    
-    // Inicia transferência do arquivo
-    if(buffer[0] == '1'){
-        sleep(1);
-        printf("Initiating transfer\n");
-        sleep(1);
-        strcpy(buffer, argv[1]);
-        consume_package(server_domain, remote_client_b, buffer);
-
-        produce_message(server_domain, remote_server_addr, buffer, 2);
-
-        memset(buffer, '\0', SIZE);
-        consume_message(server_domain, remote_server_addr, buffer);
-        if (buffer[0] == '1')
-            printf("\nCustomer A now present in the database\n");
-    }
-    else{
-        printf("File not found.\n");
-        exit(1);
-    }
-
-    free(buffer);
-
-    return 0;
-
-
+  return 0;
 }
