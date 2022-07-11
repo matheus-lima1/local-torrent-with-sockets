@@ -29,7 +29,7 @@ void erro(char *s)
 typedef struct segmentation //Estrutura de dados para a atualização do banco 
 {
 	int port;
-	char file[50];
+	char file[BUFLEN];
 } segmentation;
 
 // busca via dns.txt o cliente que possui o arquivo solicitado
@@ -37,7 +37,7 @@ int find_dns(FILE *DNS, char *buffer, char *client_port)
 {
 
 	char port[5];
-	char file[50];
+	char file[BUFLEN];
 
 	fseek(DNS, 0, SEEK_SET);
 	//Procura linha a linha do arquivo desejado e a porta do client de quem o possui
@@ -57,7 +57,7 @@ int find_dns(FILE *DNS, char *buffer, char *client_port)
 int update_dns(FILE *DNS, struct segmentation att)
 {
 	char port[5];
-	char file[50];
+	char file[BUFLEN];
 
 	//Procura linha a linha até o fim do arquivo
 	while (fscanf(DNS, "%s %s", file, port) != EOF)
