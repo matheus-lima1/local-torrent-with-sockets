@@ -1,13 +1,18 @@
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
-#define CLIENT_PORT 2222
+
+#define BUFLEN 1024 
 #define SERVER_PORT 3000 
-#define BUFLEN 1024
+#define CLIENT_PORT 2222
+#define USER_PORT 1111
 
 typedef struct
 {
@@ -42,7 +47,7 @@ void notifyServer(char * filename){
   struct sockaddr_in server_socket_in; //Socket de info do server
   struct segmentation seg; //Struct com dados para as informações necessário para atualização
 
-  seg.port = CLIENT_PORT; //Atribuindo o valor da porta
+  seg.port = USER_PORT; //Atribuindo o valor da porta
 
   int server_socket, server_socket_len = sizeof(server_socket_in); // Socket do server e seu tamanho
   char notify_file_name[BUFLEN];
@@ -83,8 +88,8 @@ void receiveFile(char * request_addr, char * filename){
 
     //Definindo as infos do socket de recebimento do file
     receive_file_socket_in.sin_family = AF_INET; 
-    receive_file_socket_in.sin_port = htons(CLIENT_PORT);
-    receive_file_socket_in.sin_addr.s_addr = inet_addr(request_addr);
+    receive_file_socket_in.sin_port = htons(USER_PORT);
+    receive_file_socket_in.sin_addr.s_addr = inet_addr("127.0.0.1");
 
     //Intervalo de timeout
     struct timeval read_timeout;
@@ -94,7 +99,7 @@ void receiveFile(char * request_addr, char * filename){
     setsockopt(receive_file_socket, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);
 
     //Envio da request para receber o pacote
-    if (sendto(receive_file_socket, filename, strlen(filename), 0, (struct sockaddr *)&receive_file_socket_in, receive_file_socket_len) == -1)
+    if (sendto(receive_file_socket, filename, BUFLEN, 0, (struct sockaddr *)&receive_file_socket_in, receive_file_socket_len) == -1)
     {
         error("Error sending request to PEER\n");
     }
@@ -140,64 +145,73 @@ void receiveFile(char * request_addr, char * filename){
 }
 
 
-void await_requisition(){
-    int socket_client; //Socket do client
-    struct sockaddr_in socket_client_in; //Infos do socket do client
-    int receive_len; //Armazenar tamanho da mensagem recebida
-    char filename[BUFLEN];
-
-    socket_client = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); //Criação do socket do cliente
-    if(socket_client == -1){ //Verificação se foi criado com sucesso
-        perror("Error creating client socket");
-        exit(1);
-    }
-
-    memset((char *)&socket_client_in, 0, sizeof(socket_client_in));//Limpando a struct que guardará as infos do socket do client
-
-    socket_client_in.sin_addr.s_addr = htonl(INADDR_ANY); //Definindo um ip não específico
-    socket_client_in.sin_family = AF_INET; //Família do protocolo
-    socket_client_in.sin_port = htons(CLIENT_PORT); //Define a porta do client 
-
-    int aux = bind( //Fazendo o bind do socket com as as definições de endereço
-        socket_client, 
-        (struct sockaddr *)&socket_client_in, 
-        sizeof(socket_client_in));
-    
-    if (aux == -1){
-        perror("Binding error");
-        exit(1);
-    }
-
-    struct sockaddr_in socket_user_in;
-    int socket_user_size = sizeof(socket_user_in);
-
-    while (1)
+void removeCharFromString(char *string, char c)
+{
+  int i;
+  for (i = 0; i < strlen(string); i++)
+  {
+    if (string[i] == c)
     {
-        printf("Awaiting requests...\n");
-        fflush(stdout);
+      string[i] = '\0';
+    }
+  }
+}
 
-        //Recebendo o nome do arquivo e salvando 
-        receive_len = recvfrom(
-            socket_client, 
-            filename, 
-            BUFLEN, 
-            0,
-            (struct sockaddr *)&socket_user_in,
-            &socket_user_size
-            );
+void await_requisition(){
+    struct sockaddr_in si_me, si_other; //Definição da struct que guardará os endereços
+  int s; //Variável que guardará as informações do socket
+  int slen = sizeof(si_other), recv_len; //Variáveis auxiliares que armazenam os tamanhos
+  char fileBuf[BUFLEN]; //Buffer utilizado para armazenar e transferir informações
+  packet_t packet; //Criação do pacote
+  char fileName[BUFLEN]; //Buffer que armazenará as informações do nome do arquivo
+  
+  //Criação e verificação da integridade do socket
+  if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+  {
+    error("Erro ao criar o socket!\n");
+  }
+
+  //Limpando as informações da struct
+  memset((char *)&si_me, 0, sizeof(si_me));
+  //Definindo as características do socket
+  si_me.sin_family = AF_INET; //Tipo de família do protocolo
+  si_me.sin_port = htons(USER_PORT); //Define a porta em que será utilizado
+  si_me.sin_addr.s_addr = inet_addr("127.0.0.1"); //Nesse caso será utilizado a constante INADDR_ANY
+  //                                           que indica que não será definido um IP específico
+  
+
+  //Atrelando um socket à uma porta e verificando a sua integridade
+  if (bind(s, (struct sockaddr *)&si_me, sizeof(si_me)) == -1)
+  {
+    error("Erro na funcao bind!\n");
+  }
+
+  char *returnIp; //Variável utilizada para receber o endereço IP do peer que possui o arquivo desejado
+  returnIp = malloc(16);
+
+
+  //Laço infinito
+  while (1)
+  {
+    printf("\n[**] Aguardando requisicoes...\n");
+    fflush(stdout);
+
+    //Indica que recebeu um pedido, é verificado se houve erro na recepção ou não
+    //Caso não haja, o nome do arquivo é armazenado em fileName
+    if ((recv_len = recvfrom(s, fileName, BUFLEN, 0, (struct sockaddr *)&si_other, &slen)) == -1)
+    {
+      error("Erro ao receber o nome do arquivo!\n");
+    }
+
+        removeCharFromString(fileName, '\n');
         
-        //Caso ocorreu algum erro no recebimento
-        if(receive_len == -1){
-            perror("Error receiving file name");
-            exit(1);
-        }
-
         FILE *file;
-        file = fopen(filename, "r+");//Abrindo arquivo
+        file = fopen(fileName, "r+");//Abrindo arquivo
+        printf("Depois tentar: %s\n", fileName);
 
         if(!file)//Verificando se foi possível abrir o arquivo
         {
-            printf("Error opening file");
+            printf("Error opening file\n");
             exit(1);
         }
 
@@ -232,12 +246,12 @@ void await_requisition(){
 
             //Envio do pacote ao user
             int aux = sendto(
-                socket_client, 
+                s, 
                 &package, 
                 sizeof(package),
                 0, 
-                (struct sockaddr *)&socket_user_in,
-                socket_user_size
+                (struct sockaddr *)&si_other,
+                slen
             );
 
             //Validando se o envio ocorreu corretamente
@@ -253,10 +267,9 @@ void await_requisition(){
         fclose(file);
         printf("File sent successfully\n");
     }
-    close(socket_client);
+    close(s);
 
 }
-
 void requestFile()
 {
   struct sockaddr_in socket_server_in, socket_user_in; //Infos do socket do user e do server
