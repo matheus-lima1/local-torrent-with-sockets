@@ -140,7 +140,6 @@ int main(int argc, char *argv[])
 			{
 
 				memset(buffer, '\0', BUFLEN);
-				buffer[0] = '1';
 				strcat(buffer, seeder);
 				printf("INFO: sending response to client\n");
 				//Retorna o client que possui o arquivo

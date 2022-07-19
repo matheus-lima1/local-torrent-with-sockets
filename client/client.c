@@ -7,12 +7,17 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <inttypes.h>
+#include <stdbool.h>
+#include <errno.h>
 
 
 #define BUFLEN 1024 
 #define SERVER_PORT 3000 
 #define CLIENT_PORT 2222
-#define USER_PORT 1111
 
 typedef struct
 {
@@ -47,7 +52,7 @@ void notifyServer(char * filename){
   struct sockaddr_in server_socket_in; //Socket de info do server
   struct segmentation seg; //Struct com dados para as informações necessário para atualização
 
-  seg.port = USER_PORT; //Atribuindo o valor da porta
+  seg.port = CLIENT_PORT; //Atribuindo o valor da porta
 
   int server_socket, server_socket_len = sizeof(server_socket_in); // Socket do server e seu tamanho
   char notify_file_name[BUFLEN];
@@ -74,6 +79,18 @@ void notifyServer(char * filename){
   }
 }
 
+static bool
+str_to_uint16(const char *str, uint16_t *res)
+{
+  char *end;
+  errno = 0;
+  intmax_t val = strtoimax(str, &end, 10);
+  if (errno == ERANGE || val < 0 || val > UINT16_MAX || end == str || *end != '\0')
+    return false;
+  *res = (uint16_t) val;
+  return true;
+}
+
 void receiveFile(char * request_addr, char * filename){
     struct sockaddr_in receive_file_socket_in; //Infos do socket
     int receive_file_socket; //Socket de recebimento do arquivo
@@ -85,10 +102,12 @@ void receiveFile(char * request_addr, char * filename){
     }
 
     memset((char *)&receive_file_socket_in, 0, sizeof(receive_file_socket_in));
+    uint16_t port;
+    str_to_uint16(request_addr, &port);
 
     //Definindo as infos do socket de recebimento do file
     receive_file_socket_in.sin_family = AF_INET; 
-    receive_file_socket_in.sin_port = htons(USER_PORT);
+    receive_file_socket_in.sin_port = htons(port);
     receive_file_socket_in.sin_addr.s_addr = inet_addr("127.0.0.1");
 
     //Intervalo de timeout
@@ -158,37 +177,29 @@ void removeCharFromString(char *string, char c)
 }
 
 void await_requisition(){
-    struct sockaddr_in si_me, si_other; //Definição da struct que guardará os endereços
-  int s; //Variável que guardará as informações do socket
-  int slen = sizeof(si_other), recv_len; //Variáveis auxiliares que armazenam os tamanhos
-  char fileBuf[BUFLEN]; //Buffer utilizado para armazenar e transferir informações
-  packet_t packet; //Criação do pacote
-  char fileName[BUFLEN]; //Buffer que armazenará as informações do nome do arquivo
-  
-  //Criação e verificação da integridade do socket
+  struct sockaddr_in si_me, si_other;
+  int s; 
+  int slen = sizeof(si_other), recv_len;
+  char fileBuf[BUFLEN];
+  packet_t packet;
+  char fileName[BUFLEN]; 
+
   if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
   {
     error("Erro ao criar o socket!\n");
   }
 
-  //Limpando as informações da struct
   memset((char *)&si_me, 0, sizeof(si_me));
-  //Definindo as características do socket
-  si_me.sin_family = AF_INET; //Tipo de família do protocolo
-  si_me.sin_port = htons(USER_PORT); //Define a porta em que será utilizado
-  si_me.sin_addr.s_addr = inet_addr("127.0.0.1"); //Nesse caso será utilizado a constante INADDR_ANY
-  //                                           que indica que não será definido um IP específico
+
+  si_me.sin_family = AF_INET; 
+  si_me.sin_port = htons(CLIENT_PORT);
+  si_me.sin_addr.s_addr = inet_addr("127.0.0.1"); 
   
 
-  //Atrelando um socket à uma porta e verificando a sua integridade
   if (bind(s, (struct sockaddr *)&si_me, sizeof(si_me)) == -1)
   {
     error("Erro na funcao bind!\n");
   }
-
-  char *returnIp; //Variável utilizada para receber o endereço IP do peer que possui o arquivo desejado
-  returnIp = malloc(16);
-
 
   //Laço infinito
   while (1)
